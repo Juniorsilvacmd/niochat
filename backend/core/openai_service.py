@@ -5,6 +5,7 @@ Serviço para integração com OpenAI ChatGPT
 import os
 import openai
 import logging
+import json
 from typing import Dict, Any, Optional, List
 from django.conf import settings
 from .models import Provedor, SystemConfig
@@ -80,6 +81,21 @@ class OpenAIService:
         else:
             logger.error("Não foi possível atualizar a chave da API OpenAI - chave não configurada (async)")
 
+    def _get_greeting_time(self) -> str:
+        """Retorna saudação baseada no horário atual"""
+        from datetime import datetime
+        now = datetime.now()
+        hour = now.hour
+        
+        if 5 <= hour < 12:
+            return "Bom dia"
+        elif 12 <= hour < 18:
+            return "Boa tarde"
+        else:
+            return "Boa noite"
+    
+
+
     def _build_system_prompt(self, provedor: Provedor) -> str:
         import json
         from datetime import datetime
@@ -95,6 +111,9 @@ class OpenAIService:
         nome_provedor = provedor.nome or 'Provedor de Internet'
         site_oficial = provedor.site_oficial or ''
         endereco = provedor.endereco or ''
+        
+        # Configurações dinâmicas
+        greeting_time = self._get_greeting_time()
         
         # Redes sociais
         redes = provedor.redes_sociais or {}
@@ -121,15 +140,21 @@ class OpenAIService:
         except Exception:
             horarios = {}
         
-        # Personalidade (lista)
+        # Personalidade (pode ser lista ou objeto estruturado)
         personalidade = provedor.personalidade or []
-        if not personalidade:
+        personalidade_avancada = None
+        
+        # Verificar se é personalidade avançada (objeto) ou lista simples
+        if isinstance(personalidade, dict):
+            personalidade_avancada = personalidade
+            # Manter compatibilidade usando características como personalidade base
+            personalidade_traits = personalidade.get('caracteristicas', '').split(',') if personalidade.get('caracteristicas') else []
+            personalidade = [trait.strip() for trait in personalidade_traits if trait.strip()] or ["Atencioso", "Carismatico", "Educado", "Objetivo", "Persuasivo"]
+        elif not personalidade:
             personalidade = ["Atencioso", "Carismatico", "Educado", "Objetivo", "Persuasivo"]
         
         # Planos de internet
         planos_internet = provedor.planos_internet or ''
-        # Modo de falar/sotaque
-        modo_falar = provedor.modo_falar or ''
         # Informações extras
         informacoes_extras = provedor.informacoes_extras or ''
         # Emojis
@@ -218,6 +243,28 @@ class OpenAIService:
             {
                 "name": "SalvarCpfContato",
                 "usage": "Use essa ferramenta para salvar o numero do CPF do cliente dentro do seu contato no ChatWoot. O CPF DEVE SER SALVO SOMENTE NO FORMATO NUMÉRICO."
+            },
+            {
+                "name": "consultar_cliente_sgp",
+                "usage": "Use esta ferramenta para consultar dados reais do cliente no SGP usando CPF/CNPJ. Retorna nome, contratos, status reais do sistema.",
+                "observacao": "SEMPRE use esta ferramenta após receber CPF/CNPJ de cliente existente. Use APENAS os dados retornados.",
+                "critical_rule": True
+            },
+            {
+                "name": "verificar_acesso_sgp", 
+                "usage": "Use para verificar status de acesso/conexão de um contrato específico no SGP.",
+                "observacao": "Use após identificar o contrato do cliente via consultar_cliente_sgp."
+            },
+            {
+                "name": "gerar_fatura_completa",
+                "usage": "Use para gerar fatura completa com boleto, PIX, QR code e todos os dados de pagamento.",
+                "observacao": "SEMPRE use esta ferramenta quando cliente pedir fatura/boleto. Retorna dados completos incluindo PIX.",
+                "critical_rule": True
+            },
+            {
+                "name": "gerar_pix_qrcode",
+                "usage": "Use para gerar especificamente PIX e QR code para uma fatura.",
+                "observacao": "Use quando precisar apenas dos dados PIX de uma fatura específica."
             }
         ]
         
@@ -229,9 +276,14 @@ class OpenAIService:
             f"Responder apenas sobre assuntos relacionados à {nome_provedor}.",
             "Nunca inventar informações. Sempre use 'buscar_documentos' para confirmar dados técnicos ou planos.",
             "Se não souber ou for fora do escopo, diga exatamente: 'Desculpe, não posso te ajudar com isso. Encaminhando para um atendente humano.'",
-            "*SEMPRE* Consulte a tool 'GetCpfContato' no contato inicial do cliente para verificar se o CPF já está salvo no contato do ChatWoot antes de solicitar ao cliente.",
-            "Sempre que coletar o CPF do cliente, use a ferramenta 'SalvarCpfContato' para salvar o CPF no contato do ChatWoot.",
-            "*NUNCA* pergunte 'Você já é cliente?' antes de executar 'GetCpfContato'. A ferramenta DEVE ser a primeira ação do atendimento."
+            "Seja natural e conversacional. Responda cumprimentos e perguntas gerais de forma amigável.",
+            "REGRA CRÍTICA: Se cliente já disse o que quer (fatura, boleto, suporte), NÃO pergunte 'como posso ajudar' - vá DIRETO executar a demanda.",
+            "Quando cliente mencionar FATURA/BOLETO: peça CPF → consulte SGP → apresente dados → AUTOMATICAMENTE gere fatura completa com QR code e PIX.",
+            "Quando cliente mencionar PROBLEMA TÉCNICO: peça CPF → consulte SGP → apresente dados → AUTOMATICAMENTE verifique status da conexão.",
+            "NUNCA use textos genéricos se a demanda já foi especificada - seja específico e direto.",
+            "Após receber CPF/CNPJ: consulte automaticamente no SGP e execute a ação solicitada.",
+            "NUNCA invente nomes de clientes, contratos ou dados - use APENAS informações reais do SGP.",
+            "Para novos clientes: responda sobre planos sem necessidade de CPF."
         ]
         
         regras_gerais = provedor.regras_gerais if provedor.regras_gerais else regras_padrao
@@ -239,43 +291,55 @@ class OpenAIService:
         # Fluxo de atendimento - usar personalizado se disponível, senão usar padrão
         fluxo_padrao = {
             "boas_vindas": {
-                "instructions": f"Cumprimente de forma simpática e *IMEDIATAMENTE* após a saudação, execute a tool 'GetCpfContato'. > Se encontrar CPF/CNPJ válido: confirme 'Vejo que você já é cliente!' e siga direto para 'cliente'. > Se não encontrar: pergunte 'Você já é nosso cliente?' > Se sim: peça CPF/CNPJ, salve com 'SalvarCpfContato' e vá para 'cliente'. > Se não: siga para 'nao_cliente'.",
-                "example_message": f"👋 Olá! Seja bem-vindo à {nome_provedor}! Eu sou o {nome_agente}. *Verificando seu cadastro...*"
+                "instructions": f"Use '{greeting_time}' para saudar baseado no horário atual. Seja natural e acolhedor. Só pergunte se é cliente ou colete CPF quando ele solicitar algo específico como boleto, suporte técnico, problemas de conexão, etc.",
+                "example_message": f"{greeting_time}! Seja bem-vindo à {nome_provedor}! Eu sou o {nome_agente}, como posso te ajudar?"
             },
             "cliente": {
                 "descricao_geral": f"Fluxo para quem já é cliente da {nome_provedor}.",
+                "instrucoes_importantes": [
+                    "NUNCA use textos prontos ou pergunte 'Para te ajudar melhor, você já é nosso cliente?'",
+                    "Se o cliente disser que já é cliente, vá DIRETO para solicitar CPF/CNPJ",
+                    "Após receber CPF/CNPJ, consulte AUTOMATICAMENTE no SGP e retorne os dados reais",
+                    "Use apenas dados reais vindos do SGP, nunca invente informações"
+                ],
                 "etapas": [
                     {
                         "etapa": 1,
-                        "titulo": "Identificar demanda",
-                        "acao_ia": "Perguntar de forma natural o que o cliente deseja resolver ou saber.",
-                        "observacao": "Se o cliente ja tiver falado qual a demanda, não pergunte novamente.",
-                        "example_message": "😁 Maravilha! Em que posso te ajudar hoje?"
+                        "titulo": "Detectar demanda específica",
+                        "acao_ia": "SE o cliente já mencionou uma demanda específica (fatura, boleto, problema técnico, etc.), vá DIRETO para ela. NÃO pergunte 'como posso ajudar' se ele já disse.",
+                        "demandas_especificas": [
+                            "fatura", "boleto", "conta", "pagamento", "segunda via",
+                            "sem internet", "internet parou", "problema", "suporte",
+                            "cancelar", "mudar plano", "reclamação"
+                        ],
+                        "observacao": "Se cliente disse 'quero pagar minha fatura', vá direto para solicitar CPF e gerar fatura."
                     },
                     {
                         "etapa": 2,
-                        "titulo": "CPF/CNPJ Pré-validado",
-                        "acao_ia": "Se o CPF/CNPJ foi obtido via 'GetCpfContato', confirme: 'Seu cadastro já está aqui!'. *Pule a coleta*. Se não tem CPF: peça e salve com 'SalvarCpfContato'."
+                        "titulo": "Solicitar CPF/CNPJ para demanda específica",
+                        "acao_ia": "Para demandas específicas, peça CPF/CNPJ de forma direcionada ao que ele quer.",
+                        "examples": {
+                            "fatura": "Para gerar sua fatura, preciso do seu CPF ou CNPJ.",
+                            "suporte": "Para verificar sua conexão, preciso do seu CPF ou CNPJ.",
+                            "geral": "Para localizar seu cadastro, preciso do seu CPF ou CNPJ."
+                        }
                     },
                     {
                         "etapa": 3,
-                        "titulo": "Validar CPF/CNPJ",
-                        "acao_ia": "Utilizar a tool 'validar_cpf' para confirmar os dados e retornar com os contratos do cliente, caso válido."
+                        "titulo": "Consultar SGP e executar demanda automaticamente",
+                        "acao_ia": "Após consultar dados no SGP, execute automaticamente a demanda solicitada:",
+                        "acoes_por_demanda": {
+                            "fatura": "Consulte SGP → Apresente dados do cliente → AUTOMATICAMENTE gere fatura com QR code, PIX e valor",
+                            "suporte": "Consulte SGP → Apresente dados do cliente → AUTOMATICAMENTE verifique status da conexão",
+                            "geral": "Consulte SGP → Apresente dados do cliente → Pergunte como pode ajudar"
+                        },
+                        "observacao": "NÃO pergunte 'como posso ajudar' se o cliente já especificou o que quer."
                     },
                     {
                         "etapa": 4,
-                        "titulo": "Confirmar dados",
-                        "acao_ia": "Após validar o CPF/CNPJ, confirma os dados para o cliente.",
-                        "example_message": "Ótimo! Encontrei seu cadastro. Tudo bem com você *{nome_cliente}* e o número de contrato é *{numero_de_contrato}*. Está tudo certo?",
-                        "observacao_1": "Se o cliente tiver mais de um contrato, pergunte qual deles ele deseja tratar.",
-                        "observacao_2": "Se o contrato selecionado pelo cliente estiver *ATIVO*, prossiga com o atendimento. Se estiver *SUSPENSO*, informe a ele da situação e ofereça o boleto/pix para pagamento, se estiver cancelado, pergunte se ele deseja reativar o contrato e se ele disser que sim repasse para o atendimento humano usando a tool 'encaminha_financeiro'."
-                    },
-                    {
-                        "etapa": 5,
-                        "titulo": "Entender demanda",
-                        "acao_ia": "Depois dos dados validados. entenda o que ele deseja. Se o cliente ja estiver falado, não pergunte novamente.",
-                        "example_message": "Perfeito! {nome_do_cliente} . Qual é a sua dúvida ou problema? Fatura, suporte técnico ou outro assunto? ",
-                        "observacao": "Se o cliente ja estiver falado qual a demanda, não pergunte novamente."
+                        "titulo": "Entregar resultado completo",
+                        "acao_ia": "Entregue o resultado completo da demanda em uma mensagem organizada.",
+                        "example_fatura": "🧾 **Sua Fatura**\n📄 Valor: R$ 89,90\n📅 Vencimento: 15/08/2024\n💳 Código PIX: pix123abc\n📱 QR Code: [link]\n📋 ID Fatura: #12345"
                     }
                 ]
             },
@@ -330,7 +394,6 @@ class OpenAIService:
                 "endereco": endereco,
                 "language": "Português Brasileiro",
                 "data_atual": data_atual,
-                "modo_falar": modo_falar,
                 "planos_internet": planos_internet,
                 "informacoes_extras": informacoes_extras,
                 "taxa_adesao": taxa_adesao,
@@ -340,7 +403,12 @@ class OpenAIService:
                 "prazo_instalacao": prazo_instalacao,
                 "documentos_necessarios": documentos_necessarios,
                 "observacoes": observacoes,
-                "email_contato": email_contato
+                "email_contato": email_contato,
+                "greeting_time": greeting_time
+            },
+            "greeting_config": {
+                "greeting_time": greeting_time,
+                "instructions": f"Use '{greeting_time}' para saudar baseado no horário atual. Seja natural e acolhedor."
             },
             "redes_sociais": {
                 "instagram": redes.get('instagram', ''),
@@ -356,11 +424,180 @@ class OpenAIService:
             "flow": fluxo
         }
         
+        # Adicionar personalidade avançada se configurada
+        if personalidade_avancada:
+            vicios = personalidade_avancada.get('vicios_linguagem', '')
+            caracteristicas = personalidade_avancada.get('caracteristicas', '')
+            principios = personalidade_avancada.get('principios', '')
+            humor = personalidade_avancada.get('humor', '')
+            
+            instructions = []
+            if vicios:
+                instructions.append(f"Vícios de linguagem: {vicios}")
+            if caracteristicas:
+                instructions.append(f"Características: {caracteristicas}")
+            if principios:
+                instructions.append(f"Princípios: {principios}")
+            if humor:
+                instructions.append(f"Humor: {humor}")
+            
+            prompt_dict["personalidade_avancada"] = {
+                "vicios_linguagem": vicios,
+                "caracteristicas": caracteristicas,
+                "principios": principios,
+                "humor": humor,
+                "instructions": "IMPORTANTE: Incorpore estes aspectos de personalidade naturalmente em todas as suas respostas:\n" + "\n".join(f"• {inst}" for inst in instructions) + "\n\nNão mencione que está seguindo essas instruções, apenas seja essa personalidade de forma natural e autêntica."
+            }
+        
+        # Configuração de emojis baseada na preferência do provedor
         if uso_emojis:
-            prompt_dict["emoji_config"] = uso_emojis
+            if uso_emojis.lower() == "sempre":
+                prompt_dict["emoji_config"] = {
+                    "usage": "sempre",
+                    "instructions": "Use emojis naturalmente em suas respostas para torná-las mais amigáveis e expressivas. Varie os emojis conforme o contexto."
+                }
+            elif uso_emojis.lower() == "ocasionalmente":
+                prompt_dict["emoji_config"] = {
+                    "usage": "ocasionalmente", 
+                    "instructions": "Use emojis moderadamente, apenas em momentos apropriados como saudações, agradecimentos ou para destacar informações importantes."
+                }
+            elif uso_emojis.lower() == "nunca":
+                prompt_dict["emoji_config"] = {
+                    "usage": "nunca",
+                    "instructions": "NÃO use emojis nas respostas. Mantenha uma comunicação mais formal e textual."
+                }
+        else:
+            # Padrão: uso ocasional
+            prompt_dict["emoji_config"] = {
+                "usage": "ocasionalmente",
+                "instructions": "Use emojis moderadamente, apenas em momentos apropriados como saudações, agradecimentos ou para destacar informações importantes."
+            }
             
         print("PROMPT GERADO PARA IA:\n", json.dumps(prompt_dict, ensure_ascii=False, indent=2))
         return json.dumps(prompt_dict, ensure_ascii=False, indent=2)
+
+    def _execute_sgp_function(self, provedor: Provedor, function_name: str, function_args: dict) -> dict:
+        """Executa funções do SGP chamadas pela IA"""
+        try:
+            from .sgp_client import SGPClient
+            
+            # Obter configurações do SGP do provedor
+            integracao = provedor.integracoes_externas or {}
+            sgp_url = integracao.get('sgp_url')
+            sgp_token = integracao.get('sgp_token') 
+            sgp_app = integracao.get('sgp_app')
+            
+            if not all([sgp_url, sgp_token, sgp_app]):
+                return {
+                    "erro": "Configurações do SGP não encontradas. Configure no painel do provedor.",
+                    "success": False
+                }
+            
+            # Criar cliente SGP
+            sgp = SGPClient(
+                base_url=sgp_url,
+                token=sgp_token,
+                app_name=sgp_app
+            )
+            
+            # Executar função solicitada
+            if function_name == "consultar_cliente_sgp":
+                cpf_cnpj = function_args.get('cpf_cnpj', '').replace('.', '').replace('-', '').replace('/', '')
+                resultado = sgp.consultar_cliente(cpf_cnpj)
+                
+                # Processar resultado para formato mais legível
+                if resultado.get('contratos'):
+                    contrato = resultado['contratos'][0]
+                    return {
+                        "success": True,
+                        "cliente_encontrado": True,
+                        "nome": contrato.get('razaoSocial', 'Nome não encontrado'),
+                        "contrato_id": contrato.get('contratoId'),
+                        "status_contrato": contrato.get('contratoStatusDisplay'),
+                        "dados_completos": resultado
+                    }
+                else:
+                    return {
+                        "success": True,
+                        "cliente_encontrado": False,
+                        "mensagem": "Cliente não encontrado com este CPF/CNPJ"
+                    }
+                    
+            elif function_name == "verificar_acesso_sgp":
+                contrato = function_args.get('contrato')
+                resultado = sgp.verifica_acesso(contrato)
+                
+                status_conexao = (
+                    resultado.get('msg') or
+                    resultado.get('status') or 
+                    resultado.get('status_conexao') or
+                    resultado.get('mensagem') or
+                    "Status não disponível"
+                )
+                
+                return {
+                    "success": True,
+                    "contrato": contrato,
+                    "status_conexao": status_conexao,
+                    "dados_completos": resultado
+                }
+                
+            elif function_name == "gerar_fatura_completa":
+                contrato = function_args.get('contrato')
+                
+                # Gerar fatura/boleto
+                fatura_resultado = sgp.segunda_via_fatura(contrato)
+                
+                # Se a fatura foi gerada com sucesso, gerar PIX também
+                pix_dados = None
+                if fatura_resultado and 'fatura' in str(fatura_resultado).lower():
+                    try:
+                        # Extrair ID da fatura do resultado (assumindo que vem no resultado)
+                        fatura_id = fatura_resultado.get('id') or fatura_resultado.get('fatura_id') or contrato
+                        pix_resultado = sgp.gerar_pix(fatura_id)
+                        pix_dados = pix_resultado
+                    except Exception as e:
+                        logger.warning(f"Erro ao gerar PIX: {str(e)}")
+                
+                return {
+                    "success": True,
+                    "contrato": contrato,
+                    "fatura_gerada": True,
+                    "dados_fatura": fatura_resultado,
+                    "pix_disponivel": pix_dados is not None,
+                    "dados_pix": pix_dados,
+                    "valor_fatura": fatura_resultado.get('valor') if fatura_resultado else None,
+                    "vencimento": fatura_resultado.get('vencimento') if fatura_resultado else None,
+                    "codigo_barras": fatura_resultado.get('codigo_barras') if fatura_resultado else None,
+                    "link_pdf": fatura_resultado.get('link_pdf') if fatura_resultado else None
+                }
+                
+            elif function_name == "gerar_pix_qrcode":
+                fatura_id = function_args.get('fatura_id')
+                resultado = sgp.gerar_pix(fatura_id)
+                
+                return {
+                    "success": True,
+                    "fatura_id": fatura_id,
+                    "pix_gerado": True,
+                    "codigo_pix": resultado.get('codigo_pix') if resultado else None,
+                    "qr_code": resultado.get('qr_code') if resultado else None,
+                    "valor": resultado.get('valor') if resultado else None,
+                    "dados_completos": resultado
+                }
+                
+            else:
+                return {
+                    "erro": f"Função {function_name} não implementada",
+                    "success": False
+                }
+                
+        except Exception as e:
+            logger.error(f"Erro ao executar função SGP {function_name}: {str(e)}")
+            return {
+                "erro": f"Erro ao executar {function_name}: {str(e)}",
+                "success": False
+            }
 
     def _build_user_prompt(self, mensagem: str, contexto: Dict[str, Any] = None) -> str:
         user_prompt = f"Mensagem do cliente: {mensagem}"
@@ -454,33 +691,149 @@ class OpenAIService:
             
             system_prompt = self._build_system_prompt(provedor)
             
-            # Adicionar instrução específica para perguntar se é cliente
-            if not already_asked_if_client:
-                logger.info("Adicionando instrução para perguntar se já é cliente")
-                system_prompt += "\n\nIMPORTANTE: Sempre que um cliente enviar uma mensagem pela primeira vez, você DEVE perguntar se ele já é cliente. Use uma das seguintes frases:\n"
-                system_prompt += "- 'Você já é nosso cliente?'\n"
-                system_prompt += "- 'Antes de continuar, você já é cliente da [NOME_DA_EMPRESA]?'\n"
-                system_prompt += "- 'Gostaria de saber se você já é nosso cliente?'\n"
-                system_prompt += "SEMPRE faça essa pergunta antes de responder qualquer outra coisa."
+            # Verificar se a mensagem indica necessidade de perguntar se é cliente
+            mensagem_lower = mensagem.lower()
+            needs_client_check = any(keyword in mensagem_lower for keyword in [
+                'boleto', 'fatura', 'conta', 'pagamento', 'débito', 'vencimento',
+                'sem internet', 'internet parou', 'não funciona', 'problema', 'chamado', 'reclamação',
+                'técnico', 'instalação', 'cancelar', 'mudar plano', 'alterar', 'consulta'
+            ])
+            
+            # Adicionar instrução específica para perguntar se é cliente apenas quando necessário
+            if not already_asked_if_client and needs_client_check:
+                logger.info("Detectada necessidade de verificar se é cliente - adicionando instrução")
+                system_prompt += "\n\nIMPORTANTE: O cliente mencionou algo que requer verificação se ele é cliente (boleto, problemas técnicos, etc). Pergunte educadamente se ele já é cliente antes de prosseguir. Use uma frase como:\n"
+                system_prompt += "- 'Para te ajudar melhor, você já é nosso cliente?'\n"
+                system_prompt += "- 'Posso confirmar se você já é cliente da [NOME_DA_EMPRESA]?'\n"
+                system_prompt += "Seja natural e educado na pergunta."
+            elif not already_asked_if_client:
+                logger.info("Conversa inicial - respondendo naturalmente sem forçar pergunta sobre ser cliente")
+                system_prompt += "\n\nIMPORTANTE: Responda de forma natural e amigável. Se for apenas um cumprimento ou pergunta geral, não pergunte imediatamente se é cliente. Seja acolhedor e pergunte como pode ajudar. Só verifique se é cliente quando ele solicitar algo específico como boletos, suporte técnico, etc."
             else:
-                logger.info("Já perguntou se é cliente, não adicionando instrução")
+                logger.info("Já perguntou se é cliente, prosseguindo normalmente")
             
             user_prompt = self._build_user_prompt(mensagem, contexto or {})
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ]
+            # Definir ferramentas SGP que a IA pode chamar (formato atualizado para OpenAI)
+            tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "consultar_cliente_sgp",
+                        "description": "Consulta dados reais do cliente no SGP usando CPF/CNPJ",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "cpf_cnpj": {
+                                    "type": "string",
+                                    "description": "CPF ou CNPJ do cliente (apenas números)"
+                                }
+                            },
+                            "required": ["cpf_cnpj"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "verificar_acesso_sgp",
+                        "description": "Verifica status de acesso/conexão de um contrato no SGP",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "contrato": {
+                                    "type": "string",
+                                    "description": "ID do contrato"
+                                }
+                            },
+                            "required": ["contrato"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "gerar_fatura_completa",
+                        "description": "Gera fatura completa com boleto, PIX, QR code e todos os dados de pagamento",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "contrato": {
+                                    "type": "string",
+                                    "description": "ID do contrato"
+                                }
+                            },
+                            "required": ["contrato"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "gerar_pix_qrcode",
+                        "description": "Gera PIX e QR code para pagamento de uma fatura específica",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "fatura_id": {
+                                    "type": "string",
+                                    "description": "ID da fatura para gerar PIX"
+                                }
+                            },
+                            "required": ["fatura_id"]
+                        }
+                    }
+                }
+            ]
+
+            # Fazer chamada inicial com ferramentas disponíveis
             response = openai.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 max_tokens=self.max_tokens,
-                temperature=self.temperature
+                temperature=self.temperature,
+                tools=tools,
+                tool_choice="auto"
             )
+            
+            # Processar se a IA chamou alguma ferramenta
+            if response.choices[0].message.tool_calls:
+                tool_call = response.choices[0].message.tool_calls[0]
+                function_name = tool_call.function.name
+                function_args = json.loads(tool_call.function.arguments)
+                
+                logger.info(f"IA chamou função: {function_name} com argumentos: {function_args}")
+                
+                # Executar a função chamada pela IA
+                function_result = self._execute_sgp_function(provedor, function_name, function_args)
+                
+                # Adicionar resultado da função à conversa
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": response.choices[0].message.tool_calls
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(function_result, ensure_ascii=False)
+                })
+                
+                # Gerar resposta final com os dados da função
+                response = openai.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature
+                )
             resposta = response.choices[0].message.content.strip()
             logger.info(f"Resposta gerada para provedor {provedor.nome}: {resposta[:100]}...")
             
-            # Se não perguntou ainda e a resposta não contém a pergunta sobre ser cliente, adicionar
-            if not already_asked_if_client and conversation:
+            # Verificar se precisa marcar que perguntou sobre ser cliente
+            if not already_asked_if_client and conversation and needs_client_check:
                 logger.info("Verificando se a resposta contém pergunta sobre ser cliente")
                 # Verificar se a resposta já contém uma pergunta sobre ser cliente
                 client_questions = [
@@ -488,26 +841,26 @@ class OpenAIService:
                     "já é cliente",
                     "é nosso cliente",
                     "é cliente da",
-                    "gostaria de saber se você já é"
+                    "você já é cliente",
+                    "para te ajudar melhor, você já é",
+                    "posso confirmar se você já é"
                 ]
                 
                 resposta_contem_pergunta = any(question in resposta.lower() for question in client_questions)
                 logger.info(f"Resposta contém pergunta sobre ser cliente: {resposta_contem_pergunta}")
                 
-                if not resposta_contem_pergunta:
-                    # Adicionar a pergunta no início da resposta
-                    nome_empresa = provedor.nome or "nossa empresa"
-                    pergunta_cliente = f"Antes de continuar, você já é cliente da {nome_empresa}?\n\n"
-                    resposta = pergunta_cliente + resposta
-                    logger.info(f"Adicionada pergunta sobre ser cliente: {pergunta_cliente.strip()}")
-                
-                # Marcar que já perguntou
-                conversation.additional_attributes['asked_if_client'] = True
-                conversation.save(update_fields=['additional_attributes'])
-                logger.info(f"Marcado que já perguntou se é cliente para conversa {conversation.id}")
+                # Só marcar que perguntou se realmente perguntou
+                if resposta_contem_pergunta:
+                    conversation.additional_attributes['asked_if_client'] = True
+                    conversation.save(update_fields=['additional_attributes'])
+                    logger.info(f"Marcado que já perguntou se é cliente para conversa {conversation.id}")
+                else:
+                    logger.info("Resposta não contém pergunta sobre ser cliente - não marcando como perguntado")
             else:
                 if already_asked_if_client:
                     logger.info("Já perguntou se é cliente anteriormente")
+                elif not needs_client_check:
+                    logger.info("Não foi necessário perguntar se é cliente nesta mensagem")
                 if not conversation:
                     logger.warning("Nenhuma conversa fornecida para marcar asked_if_client")
             

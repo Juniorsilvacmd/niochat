@@ -555,7 +555,123 @@ Este projeto está sob a licença MIT. Veja o arquivo LICENSE para mais detalhes
 
 Para suporte técnico ou dúvidas, abra uma issue no GitHub ou entre em contato através do email de suporte.
 
+### 🤖 Inteligência Artificial Avançada
+- **IA ChatGPT Integrada**: Atendimento automatizado inteligente
+- **Consulta SGP Automática**: IA consulta dados reais do cliente automaticamente
+- **Function Calls**: IA executa funções do SGP em tempo real
+- **Detecção Inteligente**: Reconhece demandas específicas (fatura, suporte, etc.)
+- **Fluxo Adaptativo**: Não faz perguntas desnecessárias quando o cliente já especificou o que quer
+- **Saudações Dinâmicas**: Baseadas no horário atual (Bom dia, Boa tarde, Boa noite)
+- **Personalidade Customizável**: Provedores podem configurar estilo, emojis e personalidade da IA
+- **Personalidade Avançada**: Vícios de linguagem, características, princípios e humor personalizáveis
+
+### 🏦 Integração SGP (Sistema de Gestão de Provedores)
+- **Consulta Automática de Clientes**: Por CPF/CNPJ com dados reais
+- **Verificação de Conexão**: Status online/offline automático
+- **Geração de Faturas**: Boleto + PIX + QR Code automático
+- **Dados Reais**: Nunca inventa informações, sempre consulta o SGP
+- **Function Calls SGP**: `consultar_cliente_sgp()`, `verificar_acesso_sgp()`, `gerar_fatura_completa()`
+
+### ⚡ Fluxo de Atendimento Inteligente
+- **Detecção de Demanda**: IA identifica automaticamente o que o cliente quer
+- **Execução Direta**: Quando cliente diz "fatura" → pede CPF → consulta SGP → gera fatura automaticamente
+- **Sem Perguntas Desnecessárias**: Não pergunta "como posso ajudar?" se o cliente já disse
+- **Resposta Completa**: Dados do cliente + solução em uma única mensagem
+
+### 🎯 Personalização por Provedor
+- **Configuração Individual**: Cada provedor configura sua própria IA
+- **SGP Personalizado**: URLs e tokens específicos por provedor
+- **Personalidade Única**: Cada empresa tem sua identidade na IA
+- **Emojis Configuráveis**: Sempre, ocasionalmente ou nunca
+
+## API Endpoints - IA e SGP
+
+### IA ChatGPT
+- POST /api/core/atendimento-ia/ - Processar mensagem com IA
+- Integração automática com SGP via Function Calls
+- Resposta com dados reais do sistema
+
+### SGP Function Calls (Executadas pela IA)
+- `consultar_cliente_sgp(cpf_cnpj)` - Busca dados do cliente
+- `verificar_acesso_sgp(contrato)` - Status da conexão
+- `gerar_fatura_completa(contrato)` - Boleto + PIX + QR Code
+- `gerar_pix_qrcode(fatura_id)` - PIX específico
+
+## Configuração da IA
+
+### 1. Configurar OpenAI
+```bash
+# No painel de superadmin, configure a chave da API OpenAI
+# Configurações do Sistema -> Chave API OpenAI
+```
+
+### 2. Configurar SGP por Provedor
+```bash
+# Para cada provedor, configure:
+# - SGP URL: https://sgp.provedor.com
+# - SGP Token: token_de_acesso
+# - SGP App: nome_da_aplicacao
+```
+
+### 3. Personalizar IA por Provedor
+```bash
+# Dados do Provedor:
+# - Nome do Agente IA
+# - Estilo de Personalidade
+# - Uso de Emojis (sempre/ocasionalmente/nunca)
+# - Personalidade Avançada (opcional):
+#   * Vícios de linguagem
+#   * Características
+#   * Princípios
+#   * Humor
+```
+
+## Exemplos de Uso da IA
+
+### Consulta de Fatura Automática
+```
+Cliente: "Quero pagar minha fatura"
+IA: "Para gerar sua fatura, preciso do seu CPF."
+Cliente: "123.456.789-00"
+IA: "Encontrei seu cadastro!
+     👤 Nome: João Silva
+     📋 Contrato: 12345
+     ✅ Status: Ativo
+
+     🧾 **Sua Fatura**
+     💵 Valor: R$ 89,90
+     📅 Vencimento: 15/08/2024
+     💳 PIX: abc123def
+     📱 QR Code: [link]
+     📄 PDF: [link]"
+```
+
+### Suporte Técnico Automático
+```
+Cliente: "Minha internet não funciona"
+IA: "Para verificar sua conexão, preciso do seu CPF."
+Cliente: "123.456.789-00"
+IA: "Encontrei seu cadastro!
+     👤 Nome: João Silva
+     📋 Contrato: 12345
+     
+     🔍 **Status da Conexão**
+     🌐 Status: Offline
+     ⚠️ Problema detectado na sua região
+     
+     Já acionei nossa equipe técnica!"
+```
+
 ## Changelog
+
+### v2.0.0 (Dezembro 2024) - IA Inteligente + SGP
+- 🤖 **Integração ChatGPT**: IA conversacional avançada
+- 🏦 **SGP Automático**: Consulta dados reais do cliente
+- ⚡ **Function Calls**: IA executa funções SGP em tempo real
+- 🎯 **Fluxo Inteligente**: Detecção automática de demandas
+- 🎭 **Personalidade Avançada**: Customização completa da IA
+- 📱 **Geração Automática**: Faturas com PIX e QR Code
+- 🚀 **Atendimento 3x mais rápido**: Sem perguntas desnecessárias
 
 ### v1.0.0
 - Sistema base completo

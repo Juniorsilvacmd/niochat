@@ -17,6 +17,7 @@ export default function ProviderDataForm() {
     id: null,
     nome_agente_ia: '',
     estilo_personalidade: '',
+    modo_falar: '',
     uso_emojis: '',
     personalidade: '',
     email_contato: '',
@@ -27,6 +28,13 @@ export default function ProviderDataForm() {
     documentos_necessarios: '',
     planos_internet: '',
     planos_descricao: '',
+  });
+  const [personalidadeAvancadaEnabled, setPersonalidadeAvancadaEnabled] = useState(false);
+  const [personalidadeAvancada, setPersonalidadeAvancada] = useState({
+    vicios_linguagem: '',
+    caracteristicas: '',
+    principios: '',
+    humor: ''
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -52,6 +60,7 @@ export default function ProviderDataForm() {
           id: res.data.id,
           nome_agente_ia: res.data.nome_agente_ia || '',
           estilo_personalidade: res.data.estilo_personalidade || '',
+          modo_falar: res.data.modo_falar || '',
           uso_emojis: res.data.uso_emojis || '',
           personalidade: res.data.personalidade || '',
           email_contato: res.data.email_contato || '',
@@ -63,6 +72,17 @@ export default function ProviderDataForm() {
           planos_internet: res.data.planos_internet || '',
           planos_descricao: res.data.planos_descricao || '',
         });
+        
+        // Carregar personalidade avançada se existir
+        if (res.data.personalidade && typeof res.data.personalidade === 'object') {
+          setPersonalidadeAvancada({
+            vicios_linguagem: res.data.personalidade.vicios_linguagem || '',
+            caracteristicas: res.data.personalidade.caracteristicas || '',
+            principios: res.data.personalidade.principios || '',
+            humor: res.data.personalidade.humor || ''
+          });
+          setPersonalidadeAvancadaEnabled(true);
+        }
       }
     } catch (e) {
       console.error('Erro ao carregar dados do provedor:', e);
@@ -106,18 +126,29 @@ export default function ProviderDataForm() {
     setError('');
     try {
       const token = localStorage.getItem('token');
-      console.log('[DEBUG ProviderDataForm] Dados do formulário:', form);
+      
+      // Preparar dados para envio
+      const dataToSend = { ...form };
+      
+      // Incluir personalidade avançada se habilitada
+      if (personalidadeAvancadaEnabled) {
+        dataToSend.personalidade = personalidadeAvancada;
+      } else {
+        dataToSend.personalidade = null;
+      }
+      
+      console.log('[DEBUG ProviderDataForm] Dados do formulário:', dataToSend);
       console.log('[DEBUG ProviderDataForm] Token:', token);
       
       if (form.id) {
         console.log('[DEBUG ProviderDataForm] Atualizando provedor existente');
-        await axios.patch(`/api/provedores/${form.id}/`, form, {
+        await axios.patch(`/api/provedores/${form.id}/`, dataToSend, {
           headers: { Authorization: `Token ${token}` }
         });
       } else {
         console.log('[DEBUG ProviderDataForm] Criando novo provedor');
-        console.log('[DEBUG ProviderDataForm] Dados enviados:', form);
-        const response = await axios.post('/api/provedores/', form, {
+        console.log('[DEBUG ProviderDataForm] Dados enviados:', dataToSend);
+        const response = await axios.post('/api/provedores/', dataToSend, {
           headers: { Authorization: `Token ${token}` }
         });
         console.log('[DEBUG ProviderDataForm] Resposta da API:', response.data);
@@ -133,12 +164,13 @@ export default function ProviderDataForm() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto p-8 bg-card text-card-foreground rounded-xl shadow border border-border mt-8 overflow-y-auto max-h-[80vh]">
+    <div className="w-full max-w-4xl mx-auto p-4 sm:p-6 lg:p-8 bg-card text-card-foreground rounded-xl shadow border border-border mt-8">
       <h2 className="text-2xl font-bold mb-6">Dados do Provedor</h2>
       {loading ? (
         <div className="text-muted-foreground">Carregando...</div>
       ) : (
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="overflow-y-auto max-h-[80vh]">
+          <form onSubmit={handleSubmit} className="space-y-6">
           {success && <div className="text-green-600 dark:text-green-400 mb-2">{success}</div>}
           {error && <div className="text-red-600 dark:text-red-400 mb-2">{error}</div>}
           <div>
@@ -185,6 +217,91 @@ export default function ProviderDataForm() {
               <option value="Brincalhão">Brincalhão</option>
               <option value="Objetivo">Objetivo</option>
             </select>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-4">
+              <div className="flex-1 min-w-0">
+                <h3 className="font-medium text-foreground">Personalidade avançada</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Personalize o jeito de falar, o tom e mais traços de personalidade do seu atendente virtual para criar uma experiência única!
+                </p>
+                <div className="mt-2 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded text-sm text-yellow-700">
+                  <strong>Atenção:</strong> Habilitar essa funcionalidade pode aumentar o número e tamanho das mensagens enviadas pela atendente.
+                </div>
+              </div>
+              <div className="flex-shrink-0">
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={personalidadeAvancadaEnabled}
+                    onChange={(e) => setPersonalidadeAvancadaEnabled(e.target.checked)}
+                    className="sr-only"
+                  />
+                  <div className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${personalidadeAvancadaEnabled ? 'bg-blue-600' : 'bg-gray-200'}`}>
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${personalidadeAvancadaEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </div>
+                  <span className="ml-2 text-sm text-foreground whitespace-nowrap">Habilitar personalidade avançada</span>
+                </label>
+              </div>
+            </div>
+            
+            {personalidadeAvancadaEnabled && (
+              <div className="space-y-4 overflow-hidden">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div>
+                    <div className="flex items-center mb-2">
+                      <span className="text-sm">💬</span>
+                      <label className="block font-medium ml-2 text-foreground">Vícios de linguagem</label>
+                    </div>
+                    <textarea
+                      value={personalidadeAvancada.vicios_linguagem}
+                      onChange={(e) => setPersonalidadeAvancada(prev => ({...prev, vicios_linguagem: e.target.value}))}
+                      className="input w-full bg-background text-foreground border border-border rounded px-3 py-2 h-20 resize-none"
+                      placeholder="Exemplo: Usa 'uai' frequentemente, fala de forma animada e calorosa"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center mb-2">
+                      <span className="text-sm">😊</span>
+                      <label className="block font-medium ml-2 text-foreground">Características</label>
+                    </div>
+                    <textarea
+                      value={personalidadeAvancada.caracteristicas}
+                      onChange={(e) => setPersonalidadeAvancada(prev => ({...prev, caracteristicas: e.target.value}))}
+                      className="input w-full bg-background text-foreground border border-border rounded px-3 py-2 h-20 resize-none"
+                      placeholder="Exemplo: Simpática, alegre, acolhedora, sempre pronta para ajudar"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center mb-2">
+                      <span className="text-sm">🎯</span>
+                      <label className="block font-medium ml-2 text-foreground">Princípios</label>
+                    </div>
+                    <textarea
+                      value={personalidadeAvancada.principios}
+                      onChange={(e) => setPersonalidadeAvancada(prev => ({...prev, principios: e.target.value}))}
+                      className="input w-full bg-background text-foreground border border-border rounded px-3 py-2 h-20 resize-none"
+                      placeholder="Exemplo: Valoriza a hospitalidade, a amizade e o bom atendimento"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center mb-2">
+                      <span className="text-sm">😄</span>
+                      <label className="block font-medium ml-2 text-foreground">Humor</label>
+                    </div>
+                    <textarea
+                      value={personalidadeAvancada.humor}
+                      onChange={(e) => setPersonalidadeAvancada(prev => ({...prev, humor: e.target.value}))}
+                      className="input w-full bg-background text-foreground border border-border rounded px-3 py-2 h-20 resize-none"
+                      placeholder="Exemplo: Bem-humorada, gosta de fazer piadas leves e trocadilhos"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           <div>
             <label className="block font-medium mb-1 text-foreground">Uso de Emojis</label>
@@ -260,6 +377,7 @@ export default function ProviderDataForm() {
             </button>
           </div>
         </form>
+        </div>
       )}
     </div>
   );
